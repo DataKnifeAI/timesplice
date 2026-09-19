@@ -1,6 +1,6 @@
 # Docs
 
-- [Usage](USAGE.md) — install options, Steam library selection, commands, artwork, controller notes, troubleshooting
+- [Usage](USAGE.md) — Steam library selection, `--from` / `--library` / `--dir`, artwork, flags, controller notes, env vars
 - [README hero sources](assets/SOURCES.txt)
 - [Steam grid sources](assets/steam-grid/SOURCES.txt)
 
