@@ -88,6 +88,7 @@ Art is Rewind's own marketing (official wordmark, TSR mark, Early Access trailer
 ## Notes
 
 - Need ~50 GiB free while the zip and extracted tree both exist. The zip is deleted after extract unless `--keep-zip`.
+- Steam Input / Xbox pad works under Proton. The game does not show controller glyphs. Keep a keyboard and mouse nearby for a few screens.
 - Official site: https://www.timesplittersrewind.com/ — Early Access trailer: https://www.youtube.com/watch?v=ZzWSrgQ3eMI
 - TimeSplitters Rewind is a fan project and is not affiliated with the original creators. This repo only automates the Linux Steam setup.
 

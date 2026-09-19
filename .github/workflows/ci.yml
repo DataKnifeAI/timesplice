@@ -10,10 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Bash syntax
+        run: |
+          bash -n install.sh
+          bash -n bin/timesplice
+
       - name: ShellCheck
-        uses: ludeeus/action-shellcheck@2.0.0
-        with:
-          scandir: .
-          ignore_paths: .git
+        run: shellcheck -x install.sh bin/timesplice
+
       - name: Python helper
         run: python3 lib/steam_shortcut.py selftest
+
+      - name: README hero
+        run: test -f docs/assets/timesplice-hero.jpg

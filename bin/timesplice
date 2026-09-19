@@ -164,8 +164,8 @@ quit_steam() {
   if (( SHUTDOWN_STEAM )) || confirm "Steam is running and will overwrite shortcuts.vdf on exit. Quit Steam now?"; then
     log "asking Steam to quit"
     steam -shutdown >/dev/null 2>&1 || true
-    local i
-    for i in $(seq 1 30); do
+    local _
+    for _ in $(seq 1 30); do
       steam_running || return 0
       sleep 1
     done
@@ -465,9 +465,9 @@ for lib in info.get("libraries") or []:
 }
 
 main() {
-  local cmd="${1:-help}"
+  local action="${1:-help}"
   shift || true
-  case "$cmd" in
+  case "$action" in
     install) cmd_install "$@" ;;
     shortcut) cmd_shortcut "$@" ;;
     artwork) cmd_artwork "$@" ;;
