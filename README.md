@@ -1,5 +1,7 @@
 # timesplice
 
+![timesplice — splice TimeSplitters Rewind onto Linux Steam](docs/assets/timesplice-hero.jpg)
+
 Splices [TimeSplitters Rewind](https://www.timesplittersrewind.com/) onto Linux Steam as a **non-Steam game** with Proton forced on.
 
 CachyOS is the primary target. Arch, Fedora, Debian/Ubuntu, and SteamOS work with the same flags.
@@ -16,7 +18,7 @@ There is no native Linux build. This downloads the official Windows Early Access
 ./bin/timesplice install --from ~/Downloads/TimeSplittersRewind_EarlyAccess_V03.3.zip
 
 # Game is already extracted
-./bin/timesplice install --from /mnt/game1/Games/TimeSplittersRewind --shutdown-steam
+./bin/timesplice install --from /mnt/game1/SteamLibrary/TimeSplittersRewind --shutdown-steam
 ```
 
 Or one-liner after this repo is on GitHub:
@@ -25,7 +27,7 @@ Or one-liner after this repo is on GitHub:
 curl -fsSL https://raw.githubusercontent.com/DataKnifeAI/timesplice/main/install.sh | bash
 ```
 
-Default install directory is `$TIMESPLICE_DIR`, else `/mnt/game1/Games/TimeSplittersRewind` when that Games folder exists, else `~/Games/TimeSplittersRewind`.
+Install path comes from Steam's `libraryfolders.vdf`: extra libraries first (the game drives), Steam root only if that is the only folder. Duplicate `/run/media` vs `/mnt` entries for the same `contentid` collapse to the mounted writable path. Override with `--library`, `--dir`, or `$TIMESPLICE_DIR`.
 
 ## What it does
 
@@ -50,6 +52,7 @@ Restart Steam and launch it from the library. Same flow as adding the `.exe` by 
 ```text
 --from PATH       zip or extracted tree
 --dir PATH        install directory
+--library PATH    Steam library folder (installs into PATH/TimeSplittersRewind)
 --proton NAME     compat tool internal name
 --source archive  Archive.org (default)
 --source official IndieDB instructions

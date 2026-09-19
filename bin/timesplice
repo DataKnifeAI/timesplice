@@ -15,6 +15,7 @@ INDIEDB_PAGE="https://www.indiedb.com/games/timesplitters-rewind1/downloads/time
 
 FROM=""
 INSTALL_DIR=""
+LIBRARY=""
 PROTON=""
 SOURCE="archive"
 YES=0
@@ -37,7 +38,8 @@ Usage:
 
 Options:
   --from PATH         Existing zip or extracted game directory
-  --dir PATH          Install directory
+  --dir PATH          Install directory (default: <Steam default library>/TimeSplittersRewind)
+  --library PATH      Steam library folder to install into
   --proton NAME       Steam compat tool (default: auto — proton-cachyos, then Proton 10)
   --source archive    Download community Archive.org mirror (default, CLI-friendly)
   --source official   Print official IndieDB URL and require --from
@@ -48,7 +50,7 @@ Options:
   --install-deps      Install curl unzip python3 steam via the distro package manager
 
 Env:
-  TIMESPLICE_DIR      Default install directory
+  TIMESPLICE_DIR      Override install directory
   STEAM_DIR           Steam root (native or Flatpak data dir)
 EOF
 }
@@ -110,16 +112,38 @@ pkg_family() {
   esac
 }
 
+steam_libraries_json() {
+  need python3
+  local -a cmd=(python3 "$HELPER" libraries)
+  [[ -n "$STEAM_DIR" ]] && cmd+=(--steam-root "$STEAM_DIR")
+  "${cmd[@]}"
+}
+
+json_field() {
+  local json="$1"
+  local key="$2"
+  python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1]) or "")' "$key" <<<"$json"
+}
+
 default_install_dir() {
   if [[ -n "${TIMESPLICE_DIR:-}" ]]; then
     printf '%s\n' "$TIMESPLICE_DIR"
     return
   fi
-  if [[ -d /mnt/game1/Games && -w /mnt/game1/Games ]]; then
-    printf '%s\n' /mnt/game1/Games/TimeSplittersRewind
+  if [[ -n "$LIBRARY" ]]; then
+    printf '%s\n' "${LIBRARY%/}/TimeSplittersRewind"
     return
   fi
-  printf '%s\n' "$HOME/Games/TimeSplittersRewind"
+  if [[ -n "$INSTALL_DIR" ]]; then
+    printf '%s\n' "$INSTALL_DIR"
+    return
+  fi
+  local info
+  info="$(steam_libraries_json)"
+  local dest
+  dest="$(json_field "$info" install_dir)"
+  [[ -n "$dest" ]] || dest="$HOME/Games/TimeSplittersRewind"
+  printf '%s\n' "$dest"
 }
 
 bytes_available() {
@@ -291,6 +315,7 @@ parse_common() {
     case "$1" in
       --from) FROM="$2"; shift 2 ;;
       --dir) INSTALL_DIR="$2"; shift 2 ;;
+      --library) LIBRARY="$2"; shift 2 ;;
       --proton) PROTON="$2"; shift 2 ;;
       --source) SOURCE="$2"; shift 2 ;;
       --user) STEAM_USER="$2"; shift 2 ;;
@@ -309,7 +334,10 @@ cmd_install() {
   [[ -n "$INSTALL_DIR" ]] || INSTALL_DIR="$(default_install_dir)"
   local variant
   variant="$(detect_variant)"
+  local libs
+  libs="$(steam_libraries_json)"
   log "variant=$variant install-dir=$INSTALL_DIR source=$SOURCE"
+  log "steam-library=$(json_field "$libs" default_library)"
 
   install_deps
   need python3
@@ -382,9 +410,24 @@ cmd_uninstall() {
 
 cmd_doctor() {
   parse_common "$@"
-  [[ -n "$INSTALL_DIR" ]] || INSTALL_DIR="$(default_install_dir)"
+  local libs
+  libs="$(steam_libraries_json)"
+  [[ -n "$INSTALL_DIR" ]] || INSTALL_DIR="$(json_field "$libs" install_dir)"
   printf 'variant:     %s\n' "$(detect_variant)"
+  printf 'steam-lib:   %s\n' "$(json_field "$libs" default_library)"
   printf 'install-dir: %s\n' "$INSTALL_DIR"
+  python3 -c '
+import json, sys
+info = json.load(sys.stdin)
+default = info.get("default_library")
+for lib in info.get("libraries") or []:
+    mark = "*" if lib.get("path") == default else " "
+    kind = "root" if lib.get("is_root") else "lib"
+    state = "ok" if lib.get("exists") and lib.get("writable") else "skip"
+    path = lib.get("path")
+    apps = lib.get("app_count")
+    print(f"  {mark} [{kind}/{state}] {path}  apps={apps}")
+' <<<"$libs"
   printf 'steam:       %s\n' "$(command -v steam || echo missing)"
   printf 'python3:     %s\n' "$(command -v python3 || echo missing)"
   printf 'unzip:       %s\n' "$(command -v unzip || echo missing)"
@@ -398,10 +441,6 @@ cmd_doctor() {
   else
     printf 'game-exe:    not installed\n'
   fi
-  need python3
-  local -a list_cmd=(python3 "$HELPER" list)
-  [[ -n "$STEAM_DIR" ]] && list_cmd+=(--steam-root "$STEAM_DIR")
-  "${list_cmd[@]}"
   python3 "$HELPER" selftest >/dev/null
   printf 'helper:      ok\n'
 }

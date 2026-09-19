@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 APP_NAME_DEFAULT = "TimeSplitters Rewind"
+GAME_DIR_NAME = "TimeSplittersRewind"
 
 
 def parse_binary_vdf(data: bytes, offset: int = 0) -> tuple[dict, int]:
@@ -126,6 +127,130 @@ def find_steam_roots() -> list[Path]:
             seen.add(resolved)
             roots.append(resolved)
     return roots
+
+
+def libraryfolders_vdf(steam_root: Path) -> Path | None:
+    for candidate in (
+        steam_root / "config" / "libraryfolders.vdf",
+        steam_root / "steamapps" / "libraryfolders.vdf",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def parse_libraryfolders(text: str) -> list[dict]:
+    """Read Steam libraryfolders.vdf (text VDF) into ordered library dicts."""
+    libraries: list[dict] = []
+    for match in re.finditer(
+        r'"(\d+)"\s*\{(.*?)\n\t\}',
+        text,
+        re.DOTALL,
+    ):
+        index = match.group(1)
+        body = match.group(2)
+        path_m = re.search(r'"path"\s+"([^"]+)"', body)
+        if not path_m:
+            continue
+        cid_m = re.search(r'"contentid"\s+"([^"]+)"', body)
+        label_m = re.search(r'"label"\s+"([^"]*)"', body)
+        apps = re.findall(r'"(\d+)"\s+"\d+"', body)
+        libraries.append(
+            {
+                "index": int(index),
+                "path": path_m.group(1).replace("\\\\", "/"),
+                "contentid": cid_m.group(1) if cid_m else "",
+                "label": label_m.group(1) if label_m else "",
+                "app_count": len(apps),
+            }
+        )
+    return libraries
+
+
+def _path_usable(path: Path) -> bool:
+    try:
+        return path.is_dir() and os.access(path, os.W_OK)
+    except OSError:
+        return False
+
+
+def _path_score(path: Path) -> tuple:
+    raw = str(path)
+    return (
+        1 if _path_usable(path) else 0,
+        0 if raw.startswith("/run/media/") else 1,
+        0 if "/.local/share/Steam" in raw or raw.endswith("/.steam/steam") else 1,
+    )
+
+
+def discover_libraries(steam_root: Path) -> list[dict]:
+    vdf_path = libraryfolders_vdf(steam_root)
+    raw: list[dict] = []
+    if vdf_path:
+        raw = parse_libraryfolders(vdf_path.read_text(encoding="utf-8", errors="replace"))
+    if not raw:
+        raw = [{"index": 0, "path": str(steam_root), "contentid": "", "label": "", "app_count": 0}]
+
+    steam_resolved = steam_root.resolve()
+    by_id: dict[str, dict] = {}
+    ordered: list[dict] = []
+    for entry in raw:
+        path = Path(entry["path"]).expanduser()
+        resolved = path.resolve() if path.exists() else path
+        is_root = resolved == steam_resolved or entry["index"] == 0
+        key = entry["contentid"] or str(resolved)
+        row = {
+            "index": entry["index"],
+            "path": str(resolved),
+            "contentid": entry["contentid"],
+            "label": entry["label"],
+            "app_count": entry["app_count"],
+            "exists": path.is_dir(),
+            "writable": _path_usable(path if path.is_dir() else path.parent),
+            "is_root": is_root,
+            "mounted": path.is_dir(),
+        }
+        existing = by_id.get(key)
+        if existing is None:
+            by_id[key] = row
+            ordered.append(row)
+            continue
+        if _path_score(Path(row["path"])) > _path_score(Path(existing["path"])):
+            existing.update(row)
+    return ordered
+
+
+def default_library(libraries: list[dict]) -> dict | None:
+    extras = [lib for lib in libraries if not lib["is_root"] and lib["exists"] and lib["writable"]]
+    if extras:
+        return extras[0]
+    roots = [lib for lib in libraries if lib["is_root"] and lib["writable"]]
+    if roots:
+        return roots[0]
+    return libraries[0] if libraries else None
+
+
+def default_install_dir(steam_root: Path | None = None) -> dict:
+    roots = [steam_root] if steam_root else find_steam_roots()
+    if not roots:
+        home_fallback = Path.home() / "Games" / GAME_DIR_NAME
+        return {
+            "default_library": None,
+            "install_dir": str(home_fallback),
+            "libraries": [],
+        }
+    libraries = discover_libraries(roots[0])
+    chosen = default_library(libraries)
+    if chosen:
+        install = str(Path(chosen["path"]) / GAME_DIR_NAME)
+    else:
+        install = str(Path.home() / "Games" / GAME_DIR_NAME)
+    return {
+        "steam_root": str(roots[0]),
+        "default_library": chosen["path"] if chosen else None,
+        "install_dir": install,
+        "libraries": libraries,
+    }
 
 
 def userdata_dirs(steam_root: Path) -> list[Path]:
@@ -402,14 +527,24 @@ def cmd_list(args: argparse.Namespace) -> int:
     roots = [Path(args.steam_root)] if args.steam_root else find_steam_roots()
     rows = []
     for root in roots:
+        info = default_install_dir(root)
         rows.append(
             {
                 "steam_root": str(root),
+                "default_library": info["default_library"],
+                "install_dir": info["install_dir"],
+                "libraries": info["libraries"],
                 "proton": discover_proton_tools(root),
                 "users": [u.name for u in userdata_dirs(root)],
             }
         )
     print(json.dumps(rows, indent=2))
+    return 0
+
+
+def cmd_libraries(args: argparse.Namespace) -> int:
+    root = Path(args.steam_root) if args.steam_root else None
+    print(json.dumps(default_install_dir(root), indent=2))
     return 0
 
 
@@ -428,6 +563,48 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     assert entry["AppName"] == name
     assert entry["appid"] == appid
     assert entry["Exe"] == exe_quoted
+
+    sample = """
+"libraryfolders"
+{
+	"0"
+	{
+		"path"		"/home/lee/.local/share/Steam"
+		"label"		""
+		"contentid"		"111"
+		"apps"
+		{
+			"228980"		"1"
+		}
+	}
+	"1"
+	{
+		"path"		"/run/media/lee/game1/SteamLibrary"
+		"label"		""
+		"contentid"		"222"
+		"apps"
+		{
+			"1903340"		"0"
+		}
+	}
+	"3"
+	{
+		"path"		"/mnt/game1/SteamLibrary"
+		"label"		""
+		"contentid"		"222"
+		"apps"
+		{
+			"553850"		"1"
+		}
+	}
+}
+"""
+    parsed_libs = parse_libraryfolders(sample)
+    assert [lib["path"] for lib in parsed_libs] == [
+        "/home/lee/.local/share/Steam",
+        "/run/media/lee/game1/SteamLibrary",
+        "/mnt/game1/SteamLibrary",
+    ]
     print(json.dumps({"ok": True, "appid": appid}))
     return 0
 
@@ -454,6 +631,10 @@ def main() -> int:
     listed = sub.add_parser("list")
     listed.add_argument("--steam-root")
     listed.set_defaults(func=cmd_list)
+
+    libraries = sub.add_parser("libraries")
+    libraries.add_argument("--steam-root")
+    libraries.set_defaults(func=cmd_libraries)
 
     test = sub.add_parser("selftest")
     test.set_defaults(func=cmd_selftest)
