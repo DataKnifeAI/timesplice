@@ -129,6 +129,13 @@ def artwork_dir() -> Path:
     return repo_root() / "docs" / "assets" / "steam-grid"
 
 
+def png_size(path: Path) -> tuple[int, int]:
+    data = path.read_bytes()[:24]
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise ValueError(f"{path} is not a PNG with IHDR")
+    return struct.unpack(">II", data[16:24])
+
+
 def install_artwork(grid_dir: Path, appid: int, assets_dir: Path | None = None) -> list[str]:
     assets_dir = assets_dir or artwork_dir()
     missing = [name for _, name in GRID_FILES if not (assets_dir / name).is_file()]
@@ -749,6 +756,8 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     assets = artwork_dir()
     for name in ("capsule.png", "header.png", "hero.png", "logo.png", "icon.png"):
         assert (assets / name).is_file(), f"missing shipped artwork {name}"
+    assert png_size(assets / "header.png") == (920, 430), "header.png must be 920x430"
+    assert png_size(assets / "hero.png") == (3840, 1240), "hero.png must be 3840x1240"
     tmp_grid = Path("/tmp/timesplice-selftest-grid")
     if tmp_grid.exists():
         shutil.rmtree(tmp_grid)
