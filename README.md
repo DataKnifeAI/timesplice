@@ -2,6 +2,8 @@
 
 ![timesplice — splice TimeSplitters Rewind onto Linux Steam](docs/assets/timesplice-hero.jpg)
 
+Art: TimeSplitters Rewind — https://www.timesplittersrewind.com/ — Early Access trailer https://www.youtube.com/watch?v=ZzWSrgQ3eMI
+
 Splices [TimeSplitters Rewind](https://www.timesplittersrewind.com/) onto Linux Steam as a **non-Steam game** with Proton forced on.
 
 CachyOS is the primary target. Arch, Fedora, Debian/Ubuntu, and SteamOS work with the same flags.
@@ -86,7 +88,7 @@ Art is Rewind's own marketing (official wordmark, TSR mark, Early Access trailer
 ## Notes
 
 - Need ~50 GiB free while the zip and extracted tree both exist. The zip is deleted after extract unless `--keep-zip`.
-- Official site: https://www.timesplittersrewind.com/
+- Official site: https://www.timesplittersrewind.com/ — Early Access trailer: https://www.youtube.com/watch?v=ZzWSrgQ3eMI
 - TimeSplitters Rewind is a fan project and is not affiliated with the original creators. This repo only automates the Linux Steam setup.
 
 ## License

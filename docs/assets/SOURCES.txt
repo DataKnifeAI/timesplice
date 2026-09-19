@@ -1,0 +1,23 @@
+README hero (docs/assets/timesplice-hero.jpg)
+
+Art: TimeSplitters Rewind — https://www.timesplittersrewind.com/
+Early Access trailer — https://www.youtube.com/watch?v=ZzWSrgQ3eMI
+
+Photographic base
+  steam-grid/source/early-access-trailer-00-01-32.png
+    raw 3840x2160 frame at exactly 00:01:32 (yt-dlp format 401 AV1 4K60 + ffmpeg)
+    title-free (jester on the floor)
+
+Title treatment
+  https://www.timesplittersrewind.com/images/timesplitters-rewind-logo-1.png
+    official wordmark (also at steam-grid/source/timesplitters-rewind-logo-1.png)
+
+Not baked in (kept for Steam grid / icon; not a second title on this banner)
+  https://www.timesplittersrewind.com/images/tsr-logo.png
+
+About-page gallery (https://www.timesplittersrewind.com/about) is historical
+site screenshots plus original-trilogy box-art mockups — those were not used.
+
+Derived (ImageMagick): 1920x1080 JPEG, wordmark northwest over the dark wall,
+small "timesplice" mark southeast. Unlike Steam header/hero, this banner
+keeps a single official wordmark because GitHub does not overlay a logo.

@@ -28,3 +28,6 @@ Derived (ImageMagick):
 
 Header and hero use the 1:32 still so Steam's {id}_logo.png has room to sit.
 Capsule keeps the portrait poster treatment.
+
+README banner (../timesplice-hero.jpg) uses the same 1:32 frame plus the
+official wordmark — see ../SOURCES.txt. GitHub does not overlay a logo.
