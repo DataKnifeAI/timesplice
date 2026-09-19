@@ -1,0 +1,422 @@
+#!/usr/bin/env bash
+# timesplice — download TimeSplitters Rewind and add it to Steam as a non-Steam game.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HELPER="$ROOT/lib/steam_shortcut.py"
+
+GAME_NAME="TimeSplitters Rewind"
+ZIP_NAME="TimeSplittersRewind_EarlyAccess_V03.3.zip"
+ZIP_MD5="c6ed374b212b733b8b7e761b91ff28ab"
+ZIP_BYTES=14474711288
+ARCHIVE_URL="https://archive.org/download/time-splitters-rewind-early-access-v-03.3/${ZIP_NAME}"
+OFFICIAL_PAGE="https://www.timesplittersrewind.com/"
+INDIEDB_PAGE="https://www.indiedb.com/games/timesplitters-rewind1/downloads/timesplitters-rewind-early-access-v03"
+
+FROM=""
+INSTALL_DIR=""
+PROTON=""
+SOURCE="archive"
+YES=0
+KEEP_ZIP=0
+SHUTDOWN_STEAM=0
+INSTALL_DEPS=0
+STEAM_USER=""
+STEAM_DIR="${STEAM_DIR:-}"
+
+usage() {
+  cat <<'EOF'
+timesplice — splice TimeSplitters Rewind onto Linux Steam
+
+Usage:
+  timesplice install [options]    Download/extract and add a Steam non-Steam shortcut
+  timesplice shortcut [options]   Refresh the Steam shortcut only (game already extracted)
+  timesplice doctor               Check Steam, Proton, disk, and game files
+  timesplice uninstall            Remove the Steam shortcut (keeps game files)
+  timesplice help
+
+Options:
+  --from PATH         Existing zip or extracted game directory
+  --dir PATH          Install directory
+  --proton NAME       Steam compat tool (default: auto — proton-cachyos, then Proton 10)
+  --source archive    Download community Archive.org mirror (default, CLI-friendly)
+  --source official   Print official IndieDB URL and require --from
+  --user ID           Steam userdata id (default: all local profiles)
+  --yes               Non-interactive
+  --keep-zip          Keep the zip after extract
+  --shutdown-steam    Quit Steam before writing shortcuts.vdf
+  --install-deps      Install curl unzip python3 steam via the distro package manager
+
+Env:
+  TIMESPLICE_DIR      Default install directory
+  STEAM_DIR           Steam root (native or Flatpak data dir)
+EOF
+}
+
+log() { printf '==> %s\n' "$*"; }
+warn() { printf 'timesplice: %s\n' "$*" >&2; }
+die() { warn "$*"; exit 1; }
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || die "missing command: $1"
+}
+
+confirm() {
+  local prompt="$1"
+  if (( YES )); then
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    die "refusing to continue without --yes (stdin is not a tty)"
+  fi
+  local reply=""
+  read -r -p "$prompt [y/N] " reply
+  [[ "$reply" == [yY] || "$reply" == yes ]]
+}
+
+os_release_field() {
+  local key="$1"
+  awk -F= -v k="$key" '$1==k { gsub(/"/, "", $2); print $2; exit }' /etc/os-release 2>/dev/null || true
+}
+
+detect_variant() {
+  local id id_like
+  id="$(os_release_field ID)"
+  id_like="$(os_release_field ID_LIKE)"
+  case "$id" in
+    cachyos) echo cachyos ;;
+    steamos) echo steamos ;;
+    arch | endeavouros | garuda | manjaro) echo arch ;;
+    fedora | nobara) echo fedora ;;
+    debian | ubuntu | linuxmint | pop) echo debian ;;
+    *)
+      case " $id_like " in
+        *" arch "*) echo arch ;;
+        *" fedora "*) echo fedora ;;
+        *" debian "*|*" ubuntu "*) echo debian ;;
+        *) echo generic ;;
+      esac
+      ;;
+  esac
+}
+
+pkg_family() {
+  case "$(detect_variant)" in
+    cachyos | arch) echo arch ;;
+    fedora) echo fedora ;;
+    debian) echo debian ;;
+    steamos) echo steamos ;;
+    *) echo generic ;;
+  esac
+}
+
+default_install_dir() {
+  if [[ -n "${TIMESPLICE_DIR:-}" ]]; then
+    printf '%s\n' "$TIMESPLICE_DIR"
+    return
+  fi
+  if [[ -d /mnt/game1/Games && -w /mnt/game1/Games ]]; then
+    printf '%s\n' /mnt/game1/Games/TimeSplittersRewind
+    return
+  fi
+  printf '%s\n' "$HOME/Games/TimeSplittersRewind"
+}
+
+bytes_available() {
+  local path="$1"
+  mkdir -p "$path"
+  df -B1 --output=avail "$path" | tail -n 1 | tr -d ' '
+}
+
+steam_running() {
+  pgrep -x steam >/dev/null 2>&1 || pgrep -x steamwebhelper >/dev/null 2>&1
+}
+
+quit_steam() {
+  if ! steam_running; then
+    return 0
+  fi
+  if (( SHUTDOWN_STEAM )) || confirm "Steam is running and will overwrite shortcuts.vdf on exit. Quit Steam now?"; then
+    log "asking Steam to quit"
+    steam -shutdown >/dev/null 2>&1 || true
+    local i
+    for i in $(seq 1 30); do
+      steam_running || return 0
+      sleep 1
+    done
+    die "Steam is still running. Quit it fully, then re-run."
+  fi
+  die "quit Steam (or pass --shutdown-steam) before writing the shortcut"
+}
+
+install_deps() {
+  local missing=()
+  local cmd
+  for cmd in curl unzip python3; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  if ! command -v steam >/dev/null 2>&1 && [[ ! -d "$HOME/.local/share/Steam" && ! -d "$HOME/.var/app/com.valvesoftware.Steam" ]]; then
+    missing+=(steam)
+  fi
+  if (( ${#missing[@]} == 0 )); then
+    return 0
+  fi
+  (( INSTALL_DEPS )) || confirm "Install missing packages (${missing[*]})?" || die "missing: ${missing[*]}"
+
+  case "$(pkg_family)" in
+    arch)
+      need pacman
+      sudo pacman -S --needed --noconfirm curl unzip python steam
+      ;;
+    fedora)
+      need dnf
+      sudo dnf install -y curl unzip python3 steam
+      ;;
+    debian)
+      need apt-get
+      sudo apt-get update
+      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl unzip python3 steam-installer || \
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl unzip python3 steam
+      ;;
+    steamos)
+      die "SteamOS already has Steam; install curl unzip python3 from Discover or: ${missing[*]}"
+      ;;
+    *)
+      die "unknown distro; install: ${missing[*]}"
+      ;;
+  esac
+}
+
+find_exe() {
+  local root="$1"
+  local candidate
+  while IFS= read -r -d '' candidate; do
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(find "$root" -maxdepth 4 -type f -iname 'TimeSplittersRewind.exe' -print0 2>/dev/null)
+  while IFS= read -r -d '' candidate; do
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(find "$root" -maxdepth 6 -type f -iname 'TimeSplittersRewind-Win64-Shipping.exe' -print0 2>/dev/null)
+  return 1
+}
+
+download_zip() {
+  local dest="$1"
+  if [[ -f "$dest" ]]; then
+    log "using existing zip $dest"
+    return 0
+  fi
+  case "$SOURCE" in
+    official)
+      cat >&2 <<EOF
+Official download is IndieDB (Cloudflare-gated; not scriptable).
+
+  $OFFICIAL_PAGE
+  $INDIEDB_PAGE
+
+Save ${ZIP_NAME} and re-run:
+
+  timesplice install --from /path/to/${ZIP_NAME}
+EOF
+      exit 2
+      ;;
+    archive)
+      log "downloading $ZIP_NAME from Archive.org (~13.5 GiB)"
+      need curl
+      curl -fL --retry 3 --retry-delay 2 -C - -o "$dest.partial" "$ARCHIVE_URL"
+      mv "$dest.partial" "$dest"
+      ;;
+    *)
+      die "unknown --source $SOURCE"
+      ;;
+  esac
+}
+
+verify_zip() {
+  local zip="$1"
+  local size
+  size="$(stat -c '%s' "$zip")"
+  if (( size < 1000000000 )); then
+    die "zip looks too small ($size bytes): $zip"
+  fi
+  if command -v md5sum >/dev/null 2>&1 && (( size == ZIP_BYTES )); then
+    log "checking md5 $ZIP_MD5"
+    echo "$ZIP_MD5  $zip" | md5sum -c -
+  else
+    warn "skipping md5 (size $size, expected $ZIP_BYTES) — still extracting"
+  fi
+}
+
+extract_zip() {
+  local zip="$1"
+  local dest="$2"
+  mkdir -p "$dest"
+  if find_exe "$dest" >/dev/null; then
+    log "game already extracted in $dest"
+    return 0
+  fi
+  log "extracting into $dest"
+  need unzip
+  unzip -q -o "$zip" -d "$dest"
+  if find_exe "$dest" >/dev/null; then
+    return 0
+  fi
+  # Zip may contain a single top-level folder.
+  local child
+  child="$(find "$dest" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+  if [[ -n "$child" ]] && find_exe "$child" >/dev/null; then
+    return 0
+  fi
+  die "could not find TimeSplittersRewind.exe after extract"
+}
+
+add_shortcut() {
+  local exe="$1"
+  need python3
+  local -a cmd=(
+    python3 "$HELPER" add
+    --exe "$exe"
+    --name "$GAME_NAME"
+    --variant "$(detect_variant)"
+  )
+  [[ -n "$PROTON" ]] && cmd+=(--proton "$PROTON")
+  [[ -n "$STEAM_DIR" ]] && cmd+=(--steam-root "$STEAM_DIR")
+  [[ -n "$STEAM_USER" ]] && cmd+=(--user "$STEAM_USER")
+  "${cmd[@]}"
+}
+
+parse_common() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from) FROM="$2"; shift 2 ;;
+      --dir) INSTALL_DIR="$2"; shift 2 ;;
+      --proton) PROTON="$2"; shift 2 ;;
+      --source) SOURCE="$2"; shift 2 ;;
+      --user) STEAM_USER="$2"; shift 2 ;;
+      --yes) YES=1; shift ;;
+      --keep-zip) KEEP_ZIP=1; shift ;;
+      --shutdown-steam) SHUTDOWN_STEAM=1; shift ;;
+      --install-deps) INSTALL_DEPS=1; shift ;;
+      -h | --help) usage; exit 0 ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+}
+
+cmd_install() {
+  parse_common "$@"
+  [[ -n "$INSTALL_DIR" ]] || INSTALL_DIR="$(default_install_dir)"
+  local variant
+  variant="$(detect_variant)"
+  log "variant=$variant install-dir=$INSTALL_DIR source=$SOURCE"
+
+  install_deps
+  need python3
+
+  local avail needed
+  needed=$((ZIP_BYTES + 40000000000))
+  avail="$(bytes_available "$(dirname "$INSTALL_DIR")")"
+  if (( avail < needed / 2 )); then
+    warn "low disk space on $(dirname "$INSTALL_DIR") (avail=$avail bytes)"
+  fi
+
+  local zip=""
+  local src="$FROM"
+  if [[ -n "$src" && -d "$src" ]]; then
+    log "using extracted tree $src"
+    INSTALL_DIR="$src"
+  elif [[ -n "$src" && -f "$src" ]]; then
+    zip="$src"
+    verify_zip "$zip"
+    extract_zip "$zip" "$INSTALL_DIR"
+  else
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    zip="$(dirname "$INSTALL_DIR")/$ZIP_NAME"
+    if ! confirm "Download/extract TimeSplitters Rewind (~13.5 GiB zip, ~35 GiB installed) into $INSTALL_DIR?"; then
+      die "aborted"
+    fi
+    download_zip "$zip"
+    verify_zip "$zip"
+    extract_zip "$zip" "$INSTALL_DIR"
+    if (( ! KEEP_ZIP )); then
+      log "removing zip (pass --keep-zip to keep it)"
+      rm -f "$zip"
+    fi
+  fi
+
+  local exe
+  exe="$(find_exe "$INSTALL_DIR")" || die "TimeSplittersRewind.exe not found under $INSTALL_DIR"
+  log "exe=$exe"
+
+  quit_steam
+  log "writing Steam non-Steam shortcut"
+  add_shortcut "$exe"
+  cat <<EOF
+
+Restart Steam. TimeSplitters Rewind is in your library as a non-Steam game.
+Compatibility is forced to Proton (CachyOS Proton if present, else Proton 10).
+
+  $OFFICIAL_PAGE
+EOF
+}
+
+cmd_shortcut() {
+  parse_common "$@"
+  [[ -n "$INSTALL_DIR" ]] || INSTALL_DIR="$(default_install_dir)"
+  local search="${FROM:-$INSTALL_DIR}"
+  local exe
+  exe="$(find_exe "$search")" || die "TimeSplittersRewind.exe not found under $search"
+  quit_steam
+  add_shortcut "$exe"
+}
+
+cmd_uninstall() {
+  parse_common "$@"
+  need python3
+  local -a cmd=(python3 "$HELPER" remove --name "$GAME_NAME")
+  [[ -n "$STEAM_DIR" ]] && cmd+=(--steam-root "$STEAM_DIR")
+  quit_steam
+  "${cmd[@]}"
+}
+
+cmd_doctor() {
+  parse_common "$@"
+  [[ -n "$INSTALL_DIR" ]] || INSTALL_DIR="$(default_install_dir)"
+  printf 'variant:     %s\n' "$(detect_variant)"
+  printf 'install-dir: %s\n' "$INSTALL_DIR"
+  printf 'steam:       %s\n' "$(command -v steam || echo missing)"
+  printf 'python3:     %s\n' "$(command -v python3 || echo missing)"
+  printf 'unzip:       %s\n' "$(command -v unzip || echo missing)"
+  if steam_running; then
+    printf 'steam-run:   yes (quit before writing shortcuts)\n'
+  else
+    printf 'steam-run:   no\n'
+  fi
+  if [[ -d "$INSTALL_DIR" ]] && find_exe "$INSTALL_DIR" >/dev/null; then
+    printf 'game-exe:    %s\n' "$(find_exe "$INSTALL_DIR")"
+  else
+    printf 'game-exe:    not installed\n'
+  fi
+  need python3
+  local -a list_cmd=(python3 "$HELPER" list)
+  [[ -n "$STEAM_DIR" ]] && list_cmd+=(--steam-root "$STEAM_DIR")
+  "${list_cmd[@]}"
+  python3 "$HELPER" selftest >/dev/null
+  printf 'helper:      ok\n'
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+  case "$cmd" in
+    install) cmd_install "$@" ;;
+    shortcut) cmd_shortcut "$@" ;;
+    uninstall) cmd_uninstall "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    help | -h | --help) usage ;;
+    *) usage >&2; exit 1 ;;
+  esac
+}
+
+main "$@"
