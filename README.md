@@ -35,19 +35,40 @@ Install path comes from Steam's `libraryfolders.vdf`: extra libraries first (the
 2. Downloads Early Access v0.3 (~13.5 GiB) from the Archive.org mirror (IndieDB is Cloudflare-gated and not scriptable). Use `--source official` to print the [IndieDB](https://www.indiedb.com/games/timesplitters-rewind1/downloads/timesplitters-rewind-early-access-v03) page and require `--from`.
 3. Extracts `TimeSplittersRewind.exe`.
 4. Quits Steam if needed (`--shutdown-steam`) so it does not overwrite `shortcuts.vdf`.
-5. Adds **TimeSplitters Rewind** to every local Steam profile as a non-Steam shortcut.
+5. Adds **TimeSplitters Rewind** to every local Steam profile as a non-Steam shortcut, with Rewind library artwork and the official TSR icon.
 6. Forces Proton: `proton-cachyos` on CachyOS when installed, otherwise **Proton 10**, then Experimental.
 
 Restart Steam and launch it from the library. Same flow as adding the `.exe` by hand, without the clicks.
+
+## Steam library art (not a store page)
+
+Steam has **no store details page** for non-Steam games. `shortcuts.vdf` can store a name, exe, start dir, icon, and launch options — not a description. Launch options are passed to the game, so timesplice does not put a blurb there. Steam Game Notes are personal overlay notes, not a public about-this-game field.
+
+What *does* work is custom artwork in `userdata/<id>/config/grid/`. timesplice writes both the 32-bit shortcut appid and the 64-bit grid id `(appid << 32) | 0x02000000`:
+
+| File | Steam use |
+| --- | --- |
+| `{id}p.png` | Portrait library capsule |
+| `{id}.png` | Landscape header |
+| `{id}_hero.png` | Library hero |
+| `{id}_logo.png` | Transparent logo overlay |
+| `{id}_icon.png` | List / shortcut icon |
+
+Art is Rewind's own marketing (official wordmark, TSR mark, Early Access trailer still). Original-trilogy box art on the about page is not used. Re-apply without rewriting the shortcut:
+
+```bash
+./bin/timesplice artwork --shutdown-steam
+```
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `timesplice install` | Download/extract + Steam shortcut |
-| `timesplice shortcut` | Shortcut only |
+| `timesplice install` | Download/extract + Steam shortcut + artwork |
+| `timesplice shortcut` | Shortcut + artwork |
+| `timesplice artwork` | Artwork only (existing shortcut) |
 | `timesplice doctor` | Steam, Proton, disk, exe |
-| `timesplice uninstall` | Remove the shortcut (keeps files) |
+| `timesplice uninstall` | Remove the shortcut and grid art (keeps files) |
 
 ```text
 --from PATH       zip or extracted tree

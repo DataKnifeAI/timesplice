@@ -11,12 +11,23 @@ import binascii
 import json
 import os
 import re
+import shutil
 import struct
 import sys
 from pathlib import Path
 
 APP_NAME_DEFAULT = "TimeSplitters Rewind"
 GAME_DIR_NAME = "TimeSplittersRewind"
+
+# Steam library artwork filenames relative to docs/assets/steam-grid/.
+# Written as {id}{suffix} for both the 32-bit shortcut appid and the 64-bit grid id.
+GRID_FILES = (
+    ("p.png", "capsule.png"),
+    (".png", "header.png"),
+    ("_hero.png", "hero.png"),
+    ("_logo.png", "logo.png"),
+    ("_icon.png", "icon.png"),
+)
 
 
 def parse_binary_vdf(data: bytes, offset: int = 0) -> tuple[dict, int]:
@@ -101,6 +112,66 @@ def shortcut_appid(exe_quoted: str, name: str) -> int:
 
 def grid_id(appid: int) -> int:
     return (appid << 32) | 0x02000000
+
+
+def grid_ids(appid: int) -> tuple[int, int]:
+    return appid, grid_id(appid)
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def artwork_dir() -> Path:
+    env = os.environ.get("TIMESPLICE_ARTWORK")
+    if env:
+        return Path(env).expanduser()
+    return repo_root() / "docs" / "assets" / "steam-grid"
+
+
+def install_artwork(grid_dir: Path, appid: int, assets_dir: Path | None = None) -> list[str]:
+    assets_dir = assets_dir or artwork_dir()
+    missing = [name for _, name in GRID_FILES if not (assets_dir / name).is_file()]
+    if missing:
+        print(f"timesplice: missing artwork {', '.join(missing)} in {assets_dir}", file=sys.stderr)
+    grid_dir.mkdir(parents=True, exist_ok=True)
+    written: list[str] = []
+    for gid in grid_ids(appid):
+        for suffix, name in GRID_FILES:
+            src = assets_dir / name
+            if not src.is_file():
+                continue
+            dest = grid_dir / f"{gid}{suffix}"
+            shutil.copy2(src, dest)
+            written.append(str(dest))
+    return written
+
+
+def remove_artwork(grid_dir: Path, appid: int) -> int:
+    if not grid_dir.is_dir():
+        return 0
+    extra = ("p.jpg", ".jpg", "_hero.jpg", "_logo.jpg", "_icon.jpg")
+    suffixes = tuple(suffix for suffix, _ in GRID_FILES) + extra
+    removed = 0
+    for gid in grid_ids(appid):
+        for suffix in suffixes:
+            path = grid_dir / f"{gid}{suffix}"
+            if path.is_file():
+                path.unlink()
+                removed += 1
+    return removed
+
+
+def resolve_icon(appid: int, grid_dir: Path, explicit: str | None, fallback: str) -> str:
+    if explicit:
+        return explicit
+    copied = grid_dir / f"{appid}_icon.png"
+    if copied.is_file():
+        return str(copied)
+    bundled = artwork_dir() / "icon.png"
+    if bundled.is_file():
+        return str(bundled)
+    return fallback
 
 
 def find_steam_roots() -> list[Path]:
@@ -377,11 +448,15 @@ def upsert_shortcut(
     return key, appid
 
 
-def remove_named(shortcuts: dict, name: str) -> int:
+def remove_named(shortcuts: dict, name: str) -> list[int]:
     remove = [key for key, value in shortcuts.items() if value.get("AppName") == name]
+    appids: list[int] = []
     for key in remove:
+        appid = shortcuts[key].get("appid")
+        if isinstance(appid, int):
+            appids.append(appid)
         del shortcuts[key]
-    return len(remove)
+    return appids
 
 
 def _upsert_compat_block(block: str, appid: str, proton: str) -> str:
@@ -468,7 +543,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     if not roots:
         raise SystemExit("Steam install not found. Set STEAM_DIR or install Steam.")
 
-    icon = args.icon or str(exe)
+    assets = Path(args.assets).expanduser() if getattr(args, "assets", None) else artwork_dir()
     written = []
     for root in roots:
         users = userdata_dirs(root)
@@ -485,7 +560,12 @@ def cmd_add(args: argparse.Namespace) -> int:
                 if not backup.exists():
                     backup.write_bytes(vdf_path.read_bytes())
             shortcuts = load_shortcuts(vdf_path)
-            _, appid = upsert_shortcut(shortcuts, name=args.name, exe=exe, icon=icon)
+            exe_quoted = f'"{exe}"'
+            appid = shortcut_appid(exe_quoted, args.name)
+            grid_dir = user / "config" / "grid"
+            art = install_artwork(grid_dir, appid, assets)
+            icon = resolve_icon(appid, grid_dir, args.icon, str(exe))
+            upsert_shortcut(shortcuts, name=args.name, exe=exe, icon=icon)
             save_shortcuts(vdf_path, shortcuts)
             set_compat_mapping(root / "config" / "config.vdf", appid, proton)
             written.append(
@@ -497,7 +577,9 @@ def cmd_add(args: argparse.Namespace) -> int:
                     "grid_id": grid_id(appid),
                     "proton": proton,
                     "exe": str(exe),
+                    "icon": icon,
                     "name": args.name,
+                    "artwork": art,
                 }
             )
     if not written:
@@ -509,17 +591,74 @@ def cmd_add(args: argparse.Namespace) -> int:
 def cmd_remove(args: argparse.Namespace) -> int:
     roots = [Path(args.steam_root)] if args.steam_root else find_steam_roots()
     removed = 0
+    art_removed = 0
     for root in roots:
         for user in userdata_dirs(root):
             vdf_path = user / "config" / "shortcuts.vdf"
             if not vdf_path.exists():
                 continue
             shortcuts = load_shortcuts(vdf_path)
-            count = remove_named(shortcuts, args.name)
-            if count:
+            appids = remove_named(shortcuts, args.name)
+            if appids:
                 save_shortcuts(vdf_path, shortcuts)
-                removed += count
-    print(json.dumps({"ok": True, "removed": removed}))
+                removed += len(appids)
+                for appid in appids:
+                    art_removed += remove_artwork(user / "config" / "grid", appid)
+    print(json.dumps({"ok": True, "removed": removed, "artwork_removed": art_removed}))
+    return 0
+
+
+def cmd_artwork(args: argparse.Namespace) -> int:
+    roots = [Path(args.steam_root)] if args.steam_root else find_steam_roots()
+    if not roots:
+        raise SystemExit("Steam install not found. Set STEAM_DIR or install Steam.")
+    assets = Path(args.assets).expanduser() if args.assets else artwork_dir()
+    written = []
+    for root in roots:
+        users = userdata_dirs(root)
+        if args.user:
+            users = [u for u in users if u.name == str(args.user)]
+        for user in users:
+            vdf_path = user / "config" / "shortcuts.vdf"
+            shortcuts = load_shortcuts(vdf_path) if vdf_path.exists() else {}
+            matches = [
+                (key, entry)
+                for key, entry in shortcuts.items()
+                if entry.get("AppName") == args.name
+            ]
+            if not matches and args.exe:
+                exe = Path(args.exe).expanduser().resolve()
+                appid = shortcut_appid(f'"{exe}"', args.name)
+                matches = [(None, {"appid": appid, "Exe": f'"{exe}"'})]
+            if not matches:
+                continue
+            for key, entry in matches:
+                appid = int(entry["appid"])
+                grid_dir = user / "config" / "grid"
+                art = install_artwork(grid_dir, appid, assets)
+                icon = resolve_icon(appid, grid_dir, args.icon, str(entry.get("icon") or ""))
+                if key is not None and icon:
+                    shortcuts[key]["icon"] = icon
+                    if vdf_path.exists():
+                        backup = vdf_path.with_suffix(".vdf.timesplice.bak")
+                        if not backup.exists():
+                            backup.write_bytes(vdf_path.read_bytes())
+                    save_shortcuts(vdf_path, shortcuts)
+                written.append(
+                    {
+                        "steam_root": str(root),
+                        "user": user.name,
+                        "appid": appid,
+                        "grid_id": grid_id(appid),
+                        "icon": icon,
+                        "artwork": art,
+                    }
+                )
+    if not written:
+        raise SystemExit(
+            f"no shortcut named {args.name!r} found. Pass --exe to write grid files from a computed appid."
+        )
+    print(json.dumps({"ok": True, "artwork": written}, indent=2))
     return 0
 
 
@@ -605,7 +744,23 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
         "/run/media/lee/game1/SteamLibrary",
         "/mnt/game1/SteamLibrary",
     ]
-    print(json.dumps({"ok": True, "appid": appid}))
+
+    assert grid_id(3652944655) == 15689277827356557312
+    assets = artwork_dir()
+    for name in ("capsule.png", "header.png", "hero.png", "logo.png", "icon.png"):
+        assert (assets / name).is_file(), f"missing shipped artwork {name}"
+    tmp_grid = Path("/tmp/timesplice-selftest-grid")
+    if tmp_grid.exists():
+        shutil.rmtree(tmp_grid)
+    files = install_artwork(tmp_grid, appid, assets)
+    assert len(files) == 10
+    for gid in grid_ids(appid):
+        for suffix, _src in GRID_FILES:
+            assert (tmp_grid / f"{gid}{suffix}").is_file()
+    assert remove_artwork(tmp_grid, appid) == 10
+    shutil.rmtree(tmp_grid, ignore_errors=True)
+
+    print(json.dumps({"ok": True, "appid": appid, "grid_id": grid_id(appid)}))
     return 0
 
 
@@ -617,6 +772,7 @@ def main() -> int:
     add.add_argument("--exe", required=True)
     add.add_argument("--name", default=APP_NAME_DEFAULT)
     add.add_argument("--icon")
+    add.add_argument("--assets")
     add.add_argument("--proton")
     add.add_argument("--steam-root")
     add.add_argument("--user")
@@ -627,6 +783,15 @@ def main() -> int:
     remove.add_argument("--name", default=APP_NAME_DEFAULT)
     remove.add_argument("--steam-root")
     remove.set_defaults(func=cmd_remove)
+
+    art = sub.add_parser("artwork")
+    art.add_argument("--name", default=APP_NAME_DEFAULT)
+    art.add_argument("--exe")
+    art.add_argument("--icon")
+    art.add_argument("--assets")
+    art.add_argument("--steam-root")
+    art.add_argument("--user")
+    art.set_defaults(func=cmd_artwork)
 
     listed = sub.add_parser("list")
     listed.add_argument("--steam-root")

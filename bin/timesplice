@@ -32,6 +32,7 @@ timesplice — splice TimeSplitters Rewind onto Linux Steam
 Usage:
   timesplice install [options]    Download/extract and add a Steam non-Steam shortcut
   timesplice shortcut [options]   Refresh the Steam shortcut only (game already extracted)
+  timesplice artwork [options]    Write library artwork for an existing shortcut
   timesplice doctor               Check Steam, Proton, disk, and game files
   timesplice uninstall            Remove the Steam shortcut (keeps game files)
   timesplice help
@@ -399,6 +400,24 @@ cmd_shortcut() {
   add_shortcut "$exe"
 }
 
+cmd_artwork() {
+  parse_common "$@"
+  need python3
+  local -a cmd=(python3 "$HELPER" artwork --name "$GAME_NAME")
+  [[ -n "$STEAM_DIR" ]] && cmd+=(--steam-root "$STEAM_DIR")
+  [[ -n "$STEAM_USER" ]] && cmd+=(--user "$STEAM_USER")
+  local search="${FROM:-${INSTALL_DIR:-}}"
+  if [[ -z "$search" ]]; then
+    search="$(default_install_dir)"
+  fi
+  local exe=""
+  if [[ -n "$search" ]] && exe="$(find_exe "$search")"; then
+    cmd+=(--exe "$exe")
+  fi
+  quit_steam
+  "${cmd[@]}"
+}
+
 cmd_uninstall() {
   parse_common "$@"
   need python3
@@ -451,6 +470,7 @@ main() {
   case "$cmd" in
     install) cmd_install "$@" ;;
     shortcut) cmd_shortcut "$@" ;;
+    artwork) cmd_artwork "$@" ;;
     uninstall) cmd_uninstall "$@" ;;
     doctor) cmd_doctor "$@" ;;
     help | -h | --help) usage ;;
