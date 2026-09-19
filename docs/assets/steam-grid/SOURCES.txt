@@ -4,8 +4,16 @@ Official site
   https://www.timesplittersrewind.com/images/timesplitters-rewind-logo-1.png
   https://www.timesplittersrewind.com/images/tsr-logo.png
 
-Official Early Access trailer still (homepage embeds https://www.youtube.com/watch?v=ZzWSrgQ3eMI)
-  https://img.youtube.com/vi/ZzWSrgQ3eMI/maxresdefault.jpg
+Official Early Access trailer (homepage embeds this)
+  https://www.youtube.com/watch?v=ZzWSrgQ3eMI
+
+  source/early-access-trailer-00-01-32.png
+    raw 3840x2160 frame at exactly 00:01:32 (yt-dlp format 401 AV1 4K60 + ffmpeg)
+    title-free (jester on the floor); Steam overlays {id}_logo.png
+
+  source/early-access-trailer.jpg
+    YouTube maxresdefault poster (has baked-in TIMESPLITTERS REWIND / EARLY ACCESS TRAILER)
+    https://img.youtube.com/vi/ZzWSrgQ3eMI/maxresdefault.jpg
 
 IndieDB (https://www.indiedb.com/games/timesplitters-rewind1) is Cloudflare-gated;
 no extra stills were copied from there. Official about/gallery pages also host
@@ -14,9 +22,9 @@ original-trilogy box-art mockups — those were not used.
 Derived (ImageMagick):
   logo.png     official wordmark, trimmed (Steam overlays this; do not bake it into header/hero)
   icon.png     official TSR mark (256x256)
-  hero.png     trailer character crop (580x720+700+0) on #0E1623, 1920x620
-  header.png   same crop on #0E1623, 920x430 — no wordmark (still already has title)
-  capsule.png  trailer character crop + official wordmark, 600x900
+  header.png   00:01:32 frame cover-crop, 920x430 — no wordmark
+  hero.png     same 00:01:32 frame, wide crop 3840x1240+0+259 — no wordmark
+  capsule.png  poster character crop + official wordmark, 600x900
 
-The YouTube still already says TIMESPLITTERS REWIND / EARLY ACCESS TRAILER.
-Header and hero crop the jester only so Steam's {id}_logo.png does not stack a second title.
+Header and hero use the 1:32 still so Steam's {id}_logo.png has room to sit.
+Capsule keeps the portrait poster treatment.
